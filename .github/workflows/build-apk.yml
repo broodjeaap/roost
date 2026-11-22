@@ -1,6 +1,9 @@
 # Builds a signed, installable release APK.
-#   - every push to main/master, and manual runs: APK attached to the run as an artifact
-#   - tags v*: also published as a GitHub Release with the APK attached
+#   - every run: the APK is attached to the run as a plain (unzipped) artifact
+#   - pushes to main/master and manual runs: the pre-release "Latest build" (tag `latest`) is
+#     replaced, so the newest APK is always at
+#     https://github.com/<owner>/<repo>/releases/download/latest/roost.apk
+#   - tags v*: also published as their own GitHub Release
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   ROOST_KEYSTORE_BASE64    the release keystore, base64-encoded
@@ -16,11 +19,16 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# A newer push supersedes a build still running, so two builds never race to replace "latest".
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # to create releases for tags
+      contents: write # to create releases
     steps:
       - uses: actions/checkout@v4
 
@@ -57,10 +65,33 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk "$name"
           echo "path=$name" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
+      # Not zipped, so the download is the APK itself; the artifact is named after the file.
+      - uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.apk.outputs.path }}
           path: ${{ steps.apk.outputs.path }}
+          archive: false
+
+      - name: Replace the "latest" release
+        if: github.ref_type == 'branch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "${{ steps.apk.outputs.path }}" roost.apk
+          # Recreated every build: the tag moves to this commit, and a `latest` tag removed in
+          # the meantime (e.g. by a mirror push that prunes refs) comes back.
+          if gh release view latest > /dev/null 2>&1; then
+            gh release delete latest --yes --cleanup-tag
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/latest" > /dev/null 2>&1; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/latest"
+          fi
+          gh release create latest roost.apk \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Latest build" \
+            --notes "Built from ${GITHUB_SHA::7} on $GITHUB_REF_NAME: $(git log -1 --pretty=%s)
+
+          Direct download: https://github.com/$GITHUB_REPOSITORY/releases/download/latest/roost.apk"
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
