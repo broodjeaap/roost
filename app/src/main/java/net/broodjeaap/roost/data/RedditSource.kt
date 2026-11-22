@@ -29,6 +29,11 @@ sealed interface Feed {
     data class Subreddit(val name: String) : Feed {
         override val title = "r/$name"
     }
+
+    /** A user's submitted posts. */
+    data class User(val name: String) : Feed {
+        override val title = "u/$name"
+    }
 }
 
 enum class Sort(val path: String, val label: String, val timed: Boolean) {
@@ -40,10 +45,18 @@ enum class Sort(val path: String, val label: String, val timed: Boolean) {
     TOP("top", "Top", true);
 
     companion object {
-        /** Reddit's mobile site redirects every front-page sort to Best. */
-        fun available(feed: Feed): List<Sort> = if (feed is Feed.Front) listOf(BEST) else entries
+        /** Reddit's mobile site redirects every front-page sort to Best; user pages offer three. */
+        fun available(feed: Feed): List<Sort> = when (feed) {
+            Feed.Front -> listOf(BEST)
+            is Feed.User -> listOf(NEW, HOT, TOP)
+            is Feed.Subreddit -> entries
+        }
 
-        fun default(feed: Feed): Sort = if (feed is Feed.Front) BEST else HOT
+        fun default(feed: Feed): Sort = when (feed) {
+            Feed.Front -> BEST
+            is Feed.User -> NEW
+            is Feed.Subreddit -> HOT
+        }
     }
 }
 

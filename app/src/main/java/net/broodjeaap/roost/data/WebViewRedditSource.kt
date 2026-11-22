@@ -252,10 +252,12 @@ class WebViewRedditSource(feedView: WebView, threadView: WebView, private val sc
 
     companion object {
         fun listingUrl(feed: Feed, sort: Sort, time: TimeFilter): String {
-            if (feed is Feed.Front) return BASE_URL
-            val name = (feed as Feed.Subreddit).name
-            val query = if (sort.timed) "?t=${time.param}" else ""
-            return "${BASE_URL}r/$name/${sort.path}/$query"
+            val time = if (sort.timed) "t=${time.param}" else null
+            return when (feed) {
+                Feed.Front -> BASE_URL
+                is Feed.Subreddit -> "${BASE_URL}r/${feed.name}/${sort.path}/" + (time?.let { "?$it" } ?: "")
+                is Feed.User -> "${BASE_URL}user/${feed.name}/submitted/?sort=${sort.path}" + (time?.let { "&$it" } ?: "")
+            }
         }
 
         const val LOGIN_URL = "https://www.reddit.com/login/"

@@ -144,22 +144,24 @@ fun ThreadScreen(thread: ThreadState, state: AppState) {
 
 @Composable
 private fun PostDetail(post: Post, state: AppState) {
-    Column(
-        Modifier.padding(vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        PostMeta(post, Modifier.padding(horizontal = 12.dp))
-        Text(post.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 12.dp))
-        PostTags(post, Modifier.padding(horizontal = 12.dp))
-        PostMedia(post, state, inFeed = false, onOpen = { state.openUrl(post.url) })
-        post.bodyHtml?.let { html ->
-            Text(
-                rememberHtml(html, state::openUrl),
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
+    PostPressable(post, state, onOpen = null) {
+        Column(
+            Modifier.padding(vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            PostMeta(post, Modifier.padding(horizontal = 12.dp))
+            Text(post.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 12.dp))
+            PostTags(post, Modifier.padding(horizontal = 12.dp))
+            PostMedia(post, state, inFeed = false, onOpen = { state.openUrl(post.url) })
+            post.bodyHtml?.let { html ->
+                Text(
+                    rememberHtml(html, state::openUrl),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
+            PostStats(post, Modifier.padding(horizontal = 12.dp))
         }
-        PostStats(post, Modifier.padding(horizontal = 12.dp))
     }
     HorizontalDivider(thickness = 6.dp, color = MaterialTheme.colorScheme.surfaceVariant)
 }

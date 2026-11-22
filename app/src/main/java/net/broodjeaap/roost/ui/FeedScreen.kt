@@ -1,6 +1,5 @@
 package net.broodjeaap.roost.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -123,28 +122,29 @@ fun FeedScreen(state: AppState) {
 @Composable
 private fun PostCard(post: Post, state: AppState) {
     val open = { state.openThread(post.permalink, post) }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = open)
-            .padding(vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        PostMeta(post, Modifier.padding(horizontal = 12.dp))
-        Text(post.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 12.dp))
-        PostTags(post, Modifier.padding(horizontal = 12.dp))
-        PostMedia(post, state, inFeed = true, onOpen = open)
-        post.bodyHtml?.let { html ->
-            Text(
-                rememberHtml(html, state::openUrl),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 4,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
+    PostPressable(post, state, onOpen = open) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            PostMeta(post, Modifier.padding(horizontal = 12.dp))
+            Text(post.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 12.dp))
+            PostTags(post, Modifier.padding(horizontal = 12.dp))
+            PostMedia(post, state, inFeed = true, onOpen = open)
+            post.bodyHtml?.let { html ->
+                Text(
+                    rememberHtml(html, state::openUrl),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
+            PostStats(post, Modifier.padding(horizontal = 12.dp))
         }
-        PostStats(post, Modifier.padding(horizontal = 12.dp))
     }
     HorizontalDivider(thickness = 6.dp, color = MaterialTheme.colorScheme.surfaceVariant)
 }
@@ -163,7 +163,11 @@ private fun FeedFooter(state: AppState) {
             error != null -> ErrorPanel(error, state, state::retryFeed)
             state.feedLoading -> CircularProgressIndicator()
             state.hasMore -> LaunchedEffect(state.posts.size) { state.loadNext() }
-            else -> Text("End of the list", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else -> Text(
+                // Empty feeds include user profiles whose owner hides their posts.
+                if (state.posts.isEmpty()) "No posts" else "End of the list",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

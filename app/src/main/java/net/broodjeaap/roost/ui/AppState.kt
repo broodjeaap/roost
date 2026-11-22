@@ -227,6 +227,7 @@ class AppState(
                 openThread(uri.path.orEmpty())
             isReddit && segments.size >= 2 && segments[0] == "comments" -> openThread(uri.path.orEmpty())
             isReddit && segments.size == 2 && segments[0] == "r" -> openFeed(Feed.Subreddit(segments[1]))
+            isReddit && segments.size >= 2 && segments[0] in setOf("u", "user") -> openFeed(Feed.User(segments[1]))
             else -> openExternal(uri.toString())
         }
     }
