@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,6 +45,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
+import net.broodjeaap.roost.data.BodyBlock
 import net.broodjeaap.roost.data.Media
 import net.broodjeaap.roost.data.Post
 
@@ -52,6 +54,9 @@ val LocalVideoDataSource = staticCompositionLocalOf<DataSource.Factory> { error(
 
 /** Feed media is cropped to at most this tall (width / height); threads show it whole. */
 private const val MIN_FEED_RATIO = 0.8f
+
+/** Images and GIFs embedded in text (comments mostly) are shown at most this wide. */
+private val EMBED_MAX_WIDTH = 320.dp
 
 @Composable
 fun PostMeta(post: Post, modifier: Modifier = Modifier) {
@@ -92,25 +97,63 @@ fun PostTags(post: Post, modifier: Modifier = Modifier) {
     }
 }
 
-@Composable
-fun PostStats(post: Post, modifier: Modifier = Modifier) {
-    val score = post.score?.let { "${count(it)} points" } ?: "score hidden"
-    Text(
-        text = "$score · ${count(post.commentCount)} comments",
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier,
-    )
-}
-
 /** Media, or a link preview for link posts. [inFeed] crops tall media. */
 @Composable
 fun PostMedia(post: Post, state: AppState, inFeed: Boolean, onOpen: () -> Unit) {
     when (val media = post.media) {
         is Media.Image -> ImageMedia(media, inFeed, Modifier.clickable(onClick = onOpen))
         is Media.Gallery -> GalleryMedia(media, inFeed)
-        is Media.Video -> VideoMedia(post, media, state, inFeed)
+        is Media.Video -> VideoBox(
+            key = post.id,
+            video = media,
+            fallbackPoster = post.thumbnail,
+            state = state,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(ratio(media.width, media.height, inFeed)),
+        )
         null -> if (!post.isSelf) LinkPreview(post) { state.openUrl(post.url) }
+    }
+}
+
+/** Rich text with its embedded images and GIFs, which Reddit shows small; so does this. */
+@Composable
+fun RichBody(blocks: List<BodyBlock>, state: AppState, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        blocks.forEach { block ->
+            when (block) {
+                is BodyBlock.Text -> Text(rememberHtml(block.html, state::openUrl), style = MaterialTheme.typography.bodyMedium)
+                is BodyBlock.Embed -> EmbeddedMedia(block.media, state)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmbeddedMedia(media: Media, state: AppState) {
+    val size = Modifier
+        .widthIn(max = EMBED_MAX_WIDTH)
+        .fillMaxWidth()
+    when (media) {
+        is Media.Image -> AsyncImage(
+            model = media.url,
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = size
+                .then(if (media.width != null && media.height != null) Modifier.aspectRatio(ratio(media.width, media.height, false)) else Modifier)
+                .clip(RoundedCornerShape(4.dp))
+                .clickable { state.openUrl(media.url) },
+        )
+        is Media.Video -> VideoBox(
+            key = media.mp4Url ?: media.hlsUrl.orEmpty(),
+            video = media,
+            fallbackPoster = null,
+            state = state,
+            modifier = size
+                .aspectRatio(ratio(media.width, media.height, false))
+                .clip(RoundedCornerShape(4.dp)),
+        )
+        is Media.Gallery -> Unit
     }
 }
 
@@ -164,17 +207,15 @@ private fun GalleryMedia(gallery: Media.Gallery, inFeed: Boolean) {
     }
 }
 
+/** A poster with a play button until tapped; [key] identifies it for "only one video plays". */
 @Composable
-private fun VideoMedia(post: Post, video: Media.Video, state: AppState, inFeed: Boolean) {
-    val modifier = Modifier
-        .fillMaxWidth()
-        .aspectRatio(ratio(video.width, video.height, inFeed))
-        .background(Color.Black)
-    if (state.playing == post.id) {
-        VideoPlayer(video, modifier)
+private fun VideoBox(key: String, video: Media.Video, fallbackPoster: String?, state: AppState, modifier: Modifier) {
+    val sized = modifier.background(Color.Black)
+    if (state.playing == key) {
+        VideoPlayer(video, sized)
     } else {
-        Box(modifier.clickable { state.playing = post.id }, contentAlignment = Alignment.Center) {
-            val poster = video.poster ?: post.thumbnail
+        Box(sized.clickable { state.playing = key }, contentAlignment = Alignment.Center) {
+            val poster = video.poster ?: fallbackPoster
             if (poster != null) {
                 AsyncImage(
                     model = poster,

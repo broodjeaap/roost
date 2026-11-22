@@ -33,9 +33,16 @@ internal object PageParser {
         isSelf = json.optBoolean("isSelf"),
         flair = json.str("flair"),
         thumbnail = json.str("thumbnail"),
-        bodyHtml = json.str("bodyHtml"),
+        body = body(json.getJSONArray("body")),
         media = json.optJSONObject("media")?.let(::media),
     )
+
+    private fun body(array: JSONArray): List<BodyBlock> = array.objects().mapNotNull { block ->
+        when (block.getString("kind")) {
+            "media" -> media(block.getJSONObject("media"))?.let(BodyBlock::Embed)
+            else -> BodyBlock.Text(block.getString("html"))
+        }
+    }
 
     private fun media(json: JSONObject): Media? = when (json.getString("type")) {
         "image" -> image(json)
@@ -63,7 +70,7 @@ internal object PageParser {
                 score = json.int("score"),
                 createdMillis = json.long("created"),
                 permalink = json.str("permalink").orEmpty(),
-                bodyHtml = json.str("bodyHtml").orEmpty(),
+                body = body(json.getJSONArray("body")),
                 submitter = json.optBoolean("submitter"),
                 moderator = json.optBoolean("moderator"),
                 collapsedByDefault = json.optBoolean("collapsed"),

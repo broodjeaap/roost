@@ -18,7 +18,7 @@ data class Post(
     val flair: String?,
     val thumbnail: String?,
     /** Self text; a preview in listings, complete on thread pages. */
-    val bodyHtml: String?,
+    val body: List<BodyBlock>,
     val media: Media?,
 )
 
@@ -36,6 +36,12 @@ sealed interface Media {
     ) : Media
 }
 
+/** Rich text (post bodies, comments) in reading order: text between embedded images and GIFs. */
+sealed interface BodyBlock {
+    data class Text(val html: String) : BodyBlock
+    data class Embed(val media: Media) : BodyBlock
+}
+
 sealed interface CommentNode {
     data class Comment(
         val id: String,
@@ -43,7 +49,7 @@ sealed interface CommentNode {
         val score: Int?,
         val createdMillis: Long?,
         val permalink: String,
-        val bodyHtml: String,
+        val body: List<BodyBlock>,
         val submitter: Boolean,
         val moderator: Boolean,
         /** Reddit collapses some comments (e.g. AutoModerator) by default. */

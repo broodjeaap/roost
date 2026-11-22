@@ -25,9 +25,66 @@ window.roost = (function () {
     return href ? new URL(href, location.href).href : null;
   }
 
-  function html(id) {
-    var node = document.getElementById(id);
-    return node ? node.innerHTML.trim() : null;
+  // Rich text (post bodies, comments) as blocks in reading order: HTML for the text between
+  // embedded media, and the media itself, which Reddit renders as <figure class="rte-media">.
+  function body(id) {
+    var root = document.getElementById(id);
+    if (!root) return [];
+    var blocks = [];
+    var buffer = '';
+    function flush() {
+      var probe = document.createElement('div');
+      probe.innerHTML = buffer;
+      if (probe.textContent.trim()) blocks.push({ kind: 'text', html: buffer.trim() });
+      buffer = '';
+    }
+    function walk(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        var escaped = document.createElement('div');
+        escaped.textContent = node.nodeValue;
+        buffer += escaped.innerHTML;
+      } else if (node.nodeType !== Node.ELEMENT_NODE) {
+        return;
+      } else if (node.tagName === 'FIGURE') {
+        flush();
+        var embedded = figureMedia(node);
+        if (embedded) blocks.push({ kind: 'media', media: embedded });
+      } else if (!node.querySelector('figure')) {
+        buffer += node.outerHTML;
+      } else {
+        // A wrapper around media: keep its text either side as separate blocks.
+        flush();
+        Array.prototype.forEach.call(node.childNodes, walk);
+        flush();
+      }
+    }
+    Array.prototype.forEach.call(root.childNodes, walk);
+    flush();
+    return blocks;
+  }
+
+  // Images link to a larger preview than they display; GIFs are MP4 players. Sizes are only
+  // given as a CSS aspect-ratio.
+  function figureMedia(figure) {
+    var sized = figure.querySelector('[style*=aspect-ratio]');
+    var ratio = sized && /aspect-ratio:\s*([\d.]+)\s*\/\s*([\d.]+)/.exec(sized.getAttribute('style'));
+    var width = ratio ? Math.round(parseFloat(ratio[1])) : null;
+    var height = ratio ? Math.round(parseFloat(ratio[2])) : null;
+    var player = figure.querySelector('shreddit-player, shreddit-player-2');
+    var link = figure.querySelector('a[href]');
+    if (player && player.getAttribute('src')) {
+      // The link is the GIF itself (as a still image here), which makes a fitting poster.
+      return {
+        type: 'video', hlsUrl: null, mp4Url: absolute(player.getAttribute('src')),
+        poster: link ? absolute(link.getAttribute('href')) : null, width: width, height: height, gif: true
+      };
+    }
+    var img = figure.querySelector('img');
+    if (!img) return null;
+    var imageLink = img.closest('a');
+    var href = imageLink && imageLink.getAttribute('href');
+    var larger = href && /^https:\/\/(preview|i)\.redd\.it\//.test(href) ? href : null;
+    return { type: 'image', url: absolute(larger || img.getAttribute('src')), width: width, height: height };
   }
 
   function subscriptions() {
@@ -113,7 +170,7 @@ window.roost = (function () {
       isSelf: (p.getAttribute('domain') || '').indexOf('self.') === 0,
       flair: text(p.querySelector('shreddit-post-flair')) || null,
       thumbnail: thumb ? absolute(thumb.getAttribute('src')) : null,
-      bodyHtml: html(p.id + '-post-rtjson-content'),
+      body: body(p.id + '-post-rtjson-content'),
       media: type === 'text' ? null : media(p)
     };
   }
@@ -137,7 +194,7 @@ window.roost = (function () {
         score: num(c.getAttribute('score')),
         created: Date.parse(c.getAttribute('created')) || null,
         permalink: c.getAttribute('permalink'),
-        bodyHtml: html(id + '-comment-rtjson-content') || '',
+        body: body(id + '-comment-rtjson-content'),
         submitter: !!postAuthor && c.getAttribute('author') === postAuthor,
         moderator: c.hasAttribute('is-mod-distinguished'),
         collapsed: c.hasAttribute('collapsed'),

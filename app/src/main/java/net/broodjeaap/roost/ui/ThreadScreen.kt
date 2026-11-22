@@ -1,19 +1,12 @@
 package net.broodjeaap.roost.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -30,6 +23,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -144,46 +140,33 @@ fun ThreadScreen(thread: ThreadState, state: AppState) {
 
 @Composable
 private fun PostDetail(post: Post, state: AppState) {
-    PostPressable(post, state, onOpen = null) {
-        Column(
-            Modifier.padding(vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            PostMeta(post, Modifier.padding(horizontal = 12.dp))
-            Text(post.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 12.dp))
-            PostTags(post, Modifier.padding(horizontal = 12.dp))
-            PostMedia(post, state, inFeed = false, onOpen = { state.openUrl(post.url) })
-            post.bodyHtml?.let { html ->
-                Text(
-                    rememberHtml(html, state::openUrl),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-            }
-            PostStats(post, Modifier.padding(horizontal = 12.dp))
-        }
+    Column(
+        Modifier.padding(top = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        PostMeta(post, Modifier.padding(horizontal = 12.dp))
+        Text(post.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 12.dp))
+        PostTags(post, Modifier.padding(horizontal = 12.dp))
+        PostMedia(post, state, inFeed = false, onOpen = { state.openUrl(post.url) })
+        RichBody(post.body, state, Modifier.padding(horizontal = 12.dp))
+        PostActions(post, state, onOpenComments = null)
     }
     HorizontalDivider(thickness = 6.dp, color = MaterialTheme.colorScheme.surfaceVariant)
 }
 
+/** Indents by depth with a coloured bar drawn behind, so rows keep their natural height. */
 @Composable
 private fun DepthIndent(depth: Int, content: @Composable () -> Unit) {
-    Row(
+    val indent = (depth * 10).dp
+    val color = depthColors[(depth + depthColors.size - 1) % depthColors.size]
+    Box(
         Modifier
             .fillMaxWidth()
-            .height(IntrinsicSize.Min)
-    ) {
-        if (depth > 0) {
-            Spacer(Modifier.width((depth * 10).dp))
-            Box(
-                Modifier
-                    .width(2.dp)
-                    .fillMaxHeight()
-                    .background(depthColors[(depth - 1) % depthColors.size])
-            )
-        }
-        Box(Modifier.weight(1f)) { content() }
-    }
+            .drawBehind {
+                if (depth > 0) drawRect(color, topLeft = Offset(indent.toPx(), 0f), size = Size(2.dp.toPx(), size.height))
+            }
+            .padding(start = if (depth > 0) indent + 2.dp else 0.dp)
+    ) { content() }
 }
 
 @Composable
@@ -218,7 +201,7 @@ private fun CommentItem(row: CommentRow.Item, state: AppState, onToggle: () -> U
                 maxLines = 1,
             )
             if (row.hidden == null) {
-                Text(rememberHtml(comment.bodyHtml, state::openUrl), style = MaterialTheme.typography.bodyMedium)
+                RichBody(comment.body, state)
             }
         }
     }
