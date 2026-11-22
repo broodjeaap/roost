@@ -75,15 +75,32 @@ class AppState(
     /** Set by [loginFinished] until the next successful load; stops login → reload → login loops. */
     private var justLoggedIn = false
 
+    private data class FeedEntry(val feed: Feed, val sort: Sort, val time: TimeFilter)
+
+    /** Feeds to return to on back, most recent last. */
+    private val feedHistory = mutableStateListOf<FeedEntry>()
+
+    /** Whether back stays in the app; when false it goes to the system (closing the app). */
+    val canGoBack: Boolean
+        get() = overlay != null || threads.isNotEmpty() || feedHistory.isNotEmpty()
+
+    /** Switches to another feed; back returns to the current one. */
     fun openFeed(feed: Feed, sort: Sort = Sort.default(feed), time: TimeFilter = this.time) {
+        if (feed != this.feed) feedHistory.add(FeedEntry(this.feed, this.sort, this.time))
+        show(feed, sort, time)
+    }
+
+    /** Re-sorts the current feed; not a separate back step. */
+    fun setSort(sort: Sort, time: TimeFilter = this.time) = show(feed, sort, time)
+
+    private fun show(feed: Feed, sort: Sort, time: TimeFilter) {
         this.feed = feed
         this.sort = sort
         this.time = time
         threads.clear()
+        playing = null
         refresh()
     }
-
-    fun setSort(sort: Sort, time: TimeFilter = this.time) = openFeed(feed, sort, time)
 
     fun refresh() {
         feedJob?.cancel()
@@ -182,6 +199,12 @@ class AppState(
         threads.isNotEmpty() -> {
             threads.removeAt(threads.lastIndex)
             playing = null
+            true
+        }
+        feedHistory.isNotEmpty() -> {
+            val previous = feedHistory.removeAt(feedHistory.lastIndex)
+            // The hidden feed page has moved on, so the previous feed loads again.
+            show(previous.feed, previous.sort, previous.time)
             true
         }
         else -> false

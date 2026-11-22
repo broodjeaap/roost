@@ -49,7 +49,7 @@ import net.broodjeaap.roost.data.WebViewRedditSource
 @Composable
 fun RoostApp(state: AppState, source: WebViewRedditSource) {
     val overlay = state.overlay
-    BackHandler(enabled = overlay != null || state.threads.isNotEmpty()) { state.back() }
+    BackHandler(enabled = state.canGoBack) { state.back() }
     val shown = if (overlay == Overlay.PAGE && state.threads.isNotEmpty()) source.threadTab else source.feedTab
 
     Box(Modifier.fillMaxSize()) {
