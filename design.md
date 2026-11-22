@@ -36,14 +36,18 @@ Non-goals:
 
 ## Approach
 
-Chosen: a hidden Android WebView loads real old.reddit.com pages, injected JavaScript extracts posts and comments from the DOM, and a native Compose UI renders them. To Reddit this looks like someone browsing old.reddit in Chrome on their phone, because the WebView is Chromium.
+Chosen: hidden Android WebViews load real pages of new Reddit's mobile site from `sh.reddit.com`, injected JavaScript extracts posts and comments from the DOM, and a native Compose UI renders them. To Reddit this looks like someone using Chrome on their phone, because the WebView is Chromium.
 
-Why old.reddit rather than new Reddit: in the WebView, new Reddit serves its mobile site, and that site ignores front-page sorts. `reddit.com/new/`, `/top/?t=week` and `/rising/` all redirect to `reddit.com/?screen_view_count=…` (Best only), and multireddits (`r/a+b/top`) redirect to the front page too. Sorted subreddits worked, but a sorted front page was the main reason for building this. old.reddit supports every sort on the front page, subreddits and multireddits for the logged-in session. It renders on the server, its markup has been frozen for years, it returns full nested comment trees, and it paginates with a plain "next" link.
+Why `sh.reddit.com`: it is new Reddit's own host and always serves the new site. `www.reddit.com` serves the old layout to any session carrying the `redesign_optout` cookie, which visiting old.reddit sets.
+
+Limits of the mobile site, accepted: the front page is Best only (`/new/`, `/top/?t=week` and `/rising/` redirect to `/?screen_view_count=…`), and `r/all` and multireddits (`r/a+b`) land on the front page or return nothing. Sorts and time filters work for subreddits and r/popular.
+
+old.reddit was tried and dropped. It had every sort, frozen markup, full comment trees and link-based pagination. But since 2026 it requires a login, and Reddit is narrowing it to accounts that used it in the last six months ([Ars Technica](https://arstechnica.com/gadgets/2026/09/reddit-will-block-old-reddit-com-from-people-who-havent-used-it-in-6-months/)). In practice a freshly logged-in phone session was refused (`302` to `old.reddit.com/login/?reason=lor2`) while an older emulator session on the same account, Wi-Fi and IP was let in. A new install can't count on access.
 
 | Option | How it works | Why not / why |
 | --- | --- | --- |
-| Hidden WebView + DOM extraction of old.reddit (chosen) | Real page loads; JS pulls data out | Real TLS fingerprint, headers, JS, cookies and telemetry; slower and breaks on markup changes; desktop site on a phone |
-| Hidden WebView + DOM extraction of new Reddit | Same, reading `<shreddit-post>` attributes | Mobile site has no sorted front page and no multireddits; comments arrive shallow |
+| Hidden WebView + DOM extraction of new Reddit mobile (chosen) | Real page loads; JS pulls data out | Real TLS fingerprint, headers, JS, cookies and telemetry; slower and breaks on markup changes; front page Best only |
+| Hidden WebView + DOM extraction of old.reddit | Same, reading old.reddit's server-rendered markup | Every sort and full comment trees, but Reddit gates it to some sessions and is shrinking it |
 | `.json` URLs with session cookie | HTTP client fetches `reddit.com/…/top.json?t=week` | Cleanest data, but browsers never request these URLs, so a session doing only this is easy to flag |
 | Raw HTML fetch, spoofed user agent | OkHttp fetches pages, parses HTML | User agent is a weak signal; TLS/HTTP2 fingerprint, header order, missing client hints and no subresource loads still give it away |
 | Patched Boost / public API | Existing app with own API key | Being shut down; already returning 403 |
@@ -52,15 +56,15 @@ Why old.reddit rather than new Reddit: in the WebView, new Reddit serves its mob
 
 &#91;embedded content: client architecture · 6 components\]
 
-Every request to Reddit goes through one shared WebView. It stays attached underneath the Compose UI at full size, because Reddit's pages misbehave in a detached or `wrap_content` WebView: viewport units resolve to 0 and bottom sheets collapse. Login, block pages and debugging work by revealing that same WebView instead of using a second one. Requests are serialized, so only one page loads at a time.
+Every request to Reddit goes through two hidden WebViews, like two browser tabs: the feed tab keeps the current listing loaded, because more posts come from scrolling that page; the thread tab opens threads. Both stay attached underneath the Compose UI at full size, because Reddit's pages misbehave in a detached or `wrap_content` WebView: viewport units resolve to 0 and bottom sheets collapse. Login, block pages and debugging reveal one of them (login and the feed use the feed tab, an open thread its own tab). Requests are serialized, so only one page loads at a time.
 
 ## Login and session
 
-Log in once in the visible WebView at `www.reddit.com/login/`; the `.reddit.com` session cookies then also work on old.reddit.com, and the front page is simply `old.reddit.com/` with my subscriptions.
+Log in once in the visible WebView at `www.reddit.com/login/`; the `.reddit.com` session cookies then also work on `sh.reddit.com`, and the front page is simply `sh.reddit.com/` with my subscriptions.
 
 - **Shared cookies**: Android's `CookieManager` is app-wide. Call `CookieManager.getInstance().flush()` after login so the session survives the app being killed.
 - **Token refresh**: Reddit's short-lived token is refreshed by the page's own JS, so loading real pages keeps it fresh with no extra code.
-- **Logout detection**: the extractor reports old.reddit's `body.loggedin` class. If it is missing, the login overlay opens; it closes itself once Reddit navigates away from the login pages.
+- **Logout detection**: the extractor reports whether `<shreddit-app>` has the `user-logged-in` attribute. If not, the login overlay opens; it closes itself once Reddit navigates away from the login pages. If the session still isn't accepted straight after a login, the app shows an error instead of reopening login, so it can't loop.
 - **Login method**: username and password, or Reddit's email code. Not "Continue with Google": Google blocks sign-in inside embedded WebViews (`disallowed_useragent`). 2FA works.
 - **User agent**: keep the WebView's default, and never change it between login and browsing. Media requests (Coil, ExoPlayer) send the same user agent.
 
@@ -68,11 +72,13 @@ Log in once in the visible WebView at `www.reddit.com/login/`; the `.reddit.com`
 
 One small injected JS file turns the loaded page into JSON and hands it to Kotlin; it is the only part that knows Reddit's markup.
 
-- **Injection**: after page load, `evaluateJavascript` runs `extract.js`, which defines `window.roost` with `extract()`, `loadMore(id)` and `moreLoaded(id)`. `extract()` returns a listing, a comment thread or a block-page marker; `evaluateJavascript` JSON-encodes the result.
-- **Source of data**: listings are `#siteTable > .thing.link` with `data-*` attributes (fullname, author, subreddit, score, comments count, url, permalink, timestamp, nsfw, spoiler). Comments are `.thing.comment` nested through `.child > .sitetable`, with the score in `.score.unvoted[title]` and the body in `.usertext-body .md`. Subscriptions come from the "my subreddits" dropdown on every page.
-- **Pagination**: listings follow the page's "next" link (`?count=25&after=…`), which loads only when the end of the list scrolls into view. Comment "load more" clicks old.reddit's own link in the hidden page, which fetches inline, then re-extracts the thread. "Continue this thread" opens as a new thread.
-- **Media**: the expando HTML (`data-cachedhtml` on listings, rendered inline on threads) holds image previews with dimensions, gallery media IDs (full images at `i.redd.it/<id>.<ext>`) and `data-hls-url` for v.redd.it. Images load with Coil and video plays in ExoPlayer over HLS. Self-post text is not in listing HTML (old.reddit fetches it on expand), so feed cards show the title only and the thread shows the text.
-- **Fragility**: the Kotlin `RedditSource` interface returns typed models (`Post`, `Media`, `CommentNode`, `Listing`, `CommentThread`). The UI depends only on that, so a markup change means patching `extract.js`, nothing else. Extraction failures are logged with the URL under the `Roost` tag, and debug builds allow `chrome://inspect`.
+- **Injection**: `evaluateJavascript` runs `extract.js`, which defines `window.roost`: `extract()` (listing, thread or block page), `threadReady()`, `scrollToEnd()`, `loadMore(id)`, `moreLoaded(id)` and `toggleNav()`. `evaluateJavascript` JSON-encodes the results.
+- **Posts**: `<shreddit-post>` attributes give id, title, author, subreddit, score, comment count, permalink, `content-href`, domain, created timestamp, post type and `spoiler`; flair is `shreddit-post-flair`; self text (a preview on listings, complete on threads) is `#<id>-post-rtjson-content`.
+- **Comments**: `<shreddit-comment>` attributes give thingid, author, score, created, permalink, `parentid`, `collapsed` and `is-mod-distinguished`, and replies are nested inside their parent in the DOM. The body is `#<thingid>-comment-rtjson-content`, and OP is "author equals post author". Threads render their comments shortly after the page loads, so the source waits for `threadReady()`.
+- **Pagination**: the feed pages through Reddit's own infinite scroll, only when the end of the app's list comes into view. The page recycles its DOM (old posts are removed as new ones load), so new posts are recognised by id and the app keeps the accumulated list. Thread "N more replies" is a `faceplate-partial[slot=children]` inside the parent comment; the source clicks its button and re-extracts. More top-level comments come from a lazy `#top-level-more-comments-partial` that loads when scrolled into view. Deep chains with only an `a[slot=more-comments-permalink]` open as their own thread.
+- **Subscriptions**: `left-nav-communities-controller[initialstatejson]` only appears once the nav drawer opens, so the source opens and closes it once per session.
+- **Media**: images come from `img#post-image` / `img[data-post-media-primary]` with dimensions; galleries from `gallery-carousel li[slot^=page-]` previews; video from `shreddit-player[src]` (HLS for v.redd.it, MP4 for GIFs), with dimensions from `packaged-media-json` and a poster; link thumbnails from `[slot=thumbnail] img`. Images load with Coil and video plays in ExoPlayer.
+- **Fragility**: the Kotlin `RedditSource` interface returns typed models (`Post`, `Media`, `CommentNode`, `Listing`, `CommentThread`). The UI depends only on that, so a markup change means patching `extract.js`, nothing else. Extraction failures, unexpected pages and "not logged in" results are logged with the URL under the `Roost` tag, and debug builds allow `chrome://inspect`.
 
 ## Detection and account risk
 
@@ -86,12 +92,12 @@ Rules the client follows:
 - No voting, commenting or other writes (the strictest detection is on vote manipulation)
 - On a 403/429, captcha or "blocked by network security" page: stop, show it to me ("Show page" reveals the WebView), and back off. Nothing loads for 1 minute, doubling to at most 30 minutes, rather than retrying in a loop
 
-Fallback if old.reddit is retired or locked down: the `RedditSource` interface allows switching back to new Reddit's mobile markup (`<shreddit-post>` attributes; front page Best only, sorted subreddits work).
+Fallback if the mobile site gets locked down further: the `RedditSource` interface allows another source, e.g. old.reddit parsing for sessions it still serves.
 
 ## Open questions
 
-- [x] Does new Reddit's mobile markup still expose post data as `<shreddit-post>` attributes, and how are comments structured? Yes for posts. Comment bodies sit under `<details>` in `#<thingid>-comment-rtjson-content`, nested by DOM, and only the first levels load. Moot now that old.reddit is used.
-- [x] Does the hidden WebView load the mobile or desktop layout, and which is easier to extract? new Reddit serves mobile. old.reddit always serves desktop and is easier to extract.
+- [x] Does new Reddit's mobile markup still expose post data as `<shreddit-post>` attributes, and how are comments structured? Yes; see the extraction layer.
+- [x] Does the hidden WebView load the mobile or desktop layout, and which is easier to extract? Mobile on `sh.reddit.com`. old.reddit (desktop) was easier but is gated.
 - [ ] Main account or a secondary account for the first few weeks?
 - [ ] Is battery use from a hidden WebView acceptable in daily use?
 - [x] Open a tapped link in an external browser, or in a visible in-app WebView? External browser; Reddit thread and subreddit links open in the app.

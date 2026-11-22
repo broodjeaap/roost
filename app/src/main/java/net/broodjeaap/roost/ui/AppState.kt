@@ -48,7 +48,8 @@ class AppState(
         private set
     var posts by mutableStateOf<List<Post>>(emptyList())
         private set
-    var nextUrl by mutableStateOf<String?>(null)
+    /** False once the feed has no more posts to load (or before the first page arrives). */
+    var hasMore by mutableStateOf(false)
         private set
     var feedLoading by mutableStateOf(false)
         private set
@@ -71,6 +72,9 @@ class AppState(
 
     private var feedJob: Job? = null
 
+    /** Set by [loginFinished] until the next successful load; stops login → reload → login loops. */
+    private var justLoggedIn = false
+
     fun openFeed(feed: Feed, sort: Sort = Sort.default(feed), time: TimeFilter = this.time) {
         this.feed = feed
         this.sort = sort
@@ -85,15 +89,14 @@ class AppState(
         feedJob?.cancel()
         posts = emptyList()
         feedListState = LazyListState()
-        nextUrl = null
+        hasMore = false
         loadFeed { source.listing(feed, sort, time) }
     }
 
     /** Called when the end of the list becomes visible. */
     fun loadNext() {
-        val url = nextUrl ?: return
-        if (feedLoading || feedError != null) return
-        loadFeed { source.nextPage(url) }
+        if (!hasMore || feedLoading || feedError != null) return
+        loadFeed { source.morePosts() }
     }
 
     fun retryFeed() {
@@ -109,7 +112,8 @@ class AppState(
                 val listing = block()
                 val known = posts.mapTo(HashSet()) { it.id }
                 posts = posts + listing.posts.filter { it.id !in known }
-                nextUrl = listing.nextUrl
+                hasMore = listing.hasMore
+                justLoggedIn = false
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -136,6 +140,7 @@ class AppState(
                 val result = source.thread(thread.permalink)
                 thread.post = result.post
                 thread.comments = result.comments
+                justLoggedIn = false
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -184,12 +189,13 @@ class AppState(
 
     fun loginFinished() {
         overlay = null
+        justLoggedIn = true
         if (threads.isEmpty()) refresh() else loadThread(threads.last())
     }
 
     /** Reddit links open in the app; everything else in the browser. */
     fun openUrl(url: String) {
-        val uri = Uri.parse(if (url.startsWith("/")) "https://old.reddit.com$url" else url)
+        val uri = Uri.parse(if (url.startsWith("/")) "https://www.reddit.com$url" else url)
         val host = uri.host.orEmpty()
         val segments = uri.pathSegments
         val isReddit = host == "reddit.com" || host.endsWith(".reddit.com")
@@ -203,6 +209,8 @@ class AppState(
     }
 
     private fun onError(e: Exception) {
-        if (e is NotLoggedInException) overlay = Overlay.LOGIN
+        if (e !is NotLoggedInException) return
+        // Straight after a login, "not logged in" means the login didn't take; show the error instead.
+        if (justLoggedIn) justLoggedIn = false else overlay = Overlay.LOGIN
     }
 }

@@ -27,7 +27,7 @@ import net.broodjeaap.roost.ui.theme.RoostTheme
 import okhttp3.OkHttpClient
 
 class MainActivity : ComponentActivity() {
-    private lateinit var webView: WebView
+    private lateinit var webViews: List<WebView>
 
     @androidx.annotation.OptIn(UnstableApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,19 +36,13 @@ class MainActivity : ComponentActivity() {
 
         // chrome://inspect access for checking Reddit's markup; debuggable builds only.
         WebView.setWebContentsDebuggingEnabled(applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
-        // Default user agent on purpose: it must stay identical between login and browsing.
-        webView = WebView(this).apply {
-            // AndroidView defaults to wrap_content, which makes Chromium resolve vh/dvh to 0 and
-            // collapses Reddit's bottom sheets (cookie consent, login) to nothing.
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-        }
-        val source = WebViewRedditSource(webView, assets.open("extract.js").bufferedReader().use { it.readText() })
+        val feedView = newWebView()
+        val threadView = newWebView()
+        webViews = listOf(feedView, threadView)
+        val source = WebViewRedditSource(feedView, threadView, assets.open("extract.js").bufferedReader().use { it.readText() })
 
         // Media comes from Reddit's CDNs outside the WebView; at least send the same user agent.
-        val userAgent = webView.settings.userAgentString
+        val userAgent = feedView.settings.userAgentString
         val http = OkHttpClient.Builder()
             .addInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("User-Agent", userAgent).build()) }
             .build()
@@ -72,24 +66,34 @@ class MainActivity : ComponentActivity() {
         setContent {
             RoostTheme {
                 CompositionLocalProvider(LocalVideoDataSource provides videoDataSource) {
-                    RoostApp(state, webView, source)
+                    RoostApp(state, source)
                 }
             }
         }
     }
 
+    // Default user agent on purpose: it must stay identical between login and browsing.
+    private fun newWebView() = WebView(this).apply {
+        // AndroidView defaults to wrap_content, which makes Chromium resolve vh/dvh to 0 and
+        // collapses Reddit's bottom sheets (cookie consent, login) to nothing.
+        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+    }
+
     override fun onResume() {
         super.onResume()
-        webView.onResume()
+        webViews.forEach { it.onResume() }
     }
 
     override fun onPause() {
-        webView.onPause()
+        webViews.forEach { it.onPause() }
         super.onPause()
     }
 
     override fun onDestroy() {
-        webView.destroy()
+        webViews.forEach { it.destroy() }
         super.onDestroy()
     }
 }

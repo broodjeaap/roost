@@ -14,11 +14,10 @@ data class Post(
     val createdMillis: Long?,
     val nsfw: Boolean,
     val spoiler: Boolean,
-    val stickied: Boolean,
     val isSelf: Boolean,
     val flair: String?,
     val thumbnail: String?,
-    /** Self text; only present on thread pages (listings don't include it). */
+    /** Self text; a preview in listings, complete on thread pages. */
     val bodyHtml: String?,
     val media: Media?,
 )
@@ -30,6 +29,7 @@ sealed interface Media {
     data class Video(
         val hlsUrl: String?,
         val mp4Url: String?,
+        val poster: String?,
         val width: Int?,
         val height: Int?,
         val gif: Boolean,
@@ -46,19 +46,25 @@ sealed interface CommentNode {
         val bodyHtml: String,
         val submitter: Boolean,
         val moderator: Boolean,
-        val flair: String?,
-        /** Reddit collapses some comments (e.g. low score) by default. */
+        /** Reddit collapses some comments (e.g. AutoModerator) by default. */
         val collapsedByDefault: Boolean,
         val children: List<CommentNode>,
     ) : CommentNode
 
-    /** "load more comments": fetched in place by [RedditSource.loadMoreComments]. */
-    data class More(val id: String, val count: Int?) : CommentNode
+    /**
+     * "N more replies" under comment [id], or more top-level comments when [id] is [TOP];
+     * fetched in place by [RedditSource.loadMoreComments].
+     */
+    data class More(val id: String, val count: Int?) : CommentNode {
+        companion object {
+            const val TOP = "top"
+        }
+    }
 
-    /** "continue this thread": a separate page. */
+    /** A reply chain too deep to expand inline; it opens as its own page. */
     data class Continue(val url: String) : CommentNode
 }
 
-data class Listing(val posts: List<Post>, val nextUrl: String?)
+data class Listing(val posts: List<Post>, val hasMore: Boolean)
 
 data class CommentThread(val post: Post, val comments: List<CommentNode>)

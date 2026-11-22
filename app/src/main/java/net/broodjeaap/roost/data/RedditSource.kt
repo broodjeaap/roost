@@ -6,15 +6,15 @@ import kotlinx.coroutines.flow.StateFlow
 interface RedditSource {
     suspend fun listing(feed: Feed, sort: Sort, time: TimeFilter): Listing
 
-    /** Loads the page after a listing, using [Listing.nextUrl]. */
-    suspend fun nextPage(nextUrl: String): Listing
+    /** Posts after the last [listing] or [morePosts] call; empty with `hasMore = false` at the end. */
+    suspend fun morePosts(): Listing
 
     suspend fun thread(permalink: String): CommentThread
 
     /** Expands a [CommentNode.More] in [permalink]'s thread and returns the whole updated thread. */
     suspend fun loadMoreComments(permalink: String, moreId: String): CommentThread
 
-    /** Subscribed subreddits, refreshed from every page load. */
+    /** Subscribed subreddits, loaded once per session. */
     val subscriptions: StateFlow<List<String>>
 }
 
@@ -25,7 +25,7 @@ sealed interface Feed {
         override val title = "Front page"
     }
 
-    /** A subreddit, `popular`, `all` or a multireddit like `a+b`. */
+    /** A subreddit or `popular`. */
     data class Subreddit(val name: String) : Feed {
         override val title = "r/$name"
     }
@@ -40,8 +40,8 @@ enum class Sort(val path: String, val label: String, val timed: Boolean) {
     TOP("top", "Top", true);
 
     companion object {
-        /** Best only exists for the front page. */
-        fun available(feed: Feed): List<Sort> = if (feed is Feed.Front) entries else entries - BEST
+        /** Reddit's mobile site redirects every front-page sort to Best. */
+        fun available(feed: Feed): List<Sort> = if (feed is Feed.Front) listOf(BEST) else entries
 
         fun default(feed: Feed): Sort = if (feed is Feed.Front) BEST else HOT
     }

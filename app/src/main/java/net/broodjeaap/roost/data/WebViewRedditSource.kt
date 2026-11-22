@@ -1,6 +1,7 @@
 package net.broodjeaap.roost.data
 
 import android.graphics.Bitmap
+import android.os.SystemClock
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
@@ -24,28 +25,23 @@ import org.json.JSONObject
 import kotlin.coroutines.resume
 
 private const val TAG = "Roost"
-private const val BASE_URL = "https://old.reddit.com/"
+
+/** New Reddit's own host: always the new site, even for accounts whose preference is old Reddit. */
+private const val BASE_URL = "https://sh.reddit.com/"
 private const val LOAD_TIMEOUT_MS = 30_000L
+private const val THREAD_TIMEOUT_MS = 8_000L
+private const val SCROLL_TIMEOUT_MS = 10_000L
 private const val MORE_TIMEOUT_MS = 15_000L
+private const val NAV_TIMEOUT_MS = 5_000L
+private const val POLL_MS = 250L
 private const val INITIAL_BACKOFF_MS = 60_000L
 private const val MAX_BACKOFF_MS = 30 * 60_000L
-private val MORE_ID = Regex("^t1_[a-z0-9]+$")
+private val MORE_ID = Regex("^(t1_[a-z0-9]+|${CommentNode.More.TOP})$")
 
-/**
- * Loads old.reddit pages in a real (hidden) WebView, one at a time, and reads them with extract.js.
- * Every request to Reddit goes through this WebView, so it carries a real browser fingerprint.
- */
-class WebViewRedditSource(private val webView: WebView, private val script: String) : RedditSource {
-    private val mutex = Mutex()
-    private var pageLoad: CompletableDeferred<Int>? = null
-    private var mainFrameStatus = 200
-    private var loadedThread: String? = null
-    private var blockedUntil = 0L
-    private var blockReason = ""
-    private var backoffMs = INITIAL_BACKOFF_MS
-
-    private val _subscriptions = MutableStateFlow<List<String>>(emptyList())
-    override val subscriptions: StateFlow<List<String>> = _subscriptions
+/** One hidden browser tab: a WebView plus what its client reports about the current page. */
+class PageTab internal constructor(val webView: WebView) {
+    internal var pageLoad: CompletableDeferred<Int>? = null
+    internal var status = 200
 
     private val _currentUrl = MutableStateFlow<String?>(null)
     /** Whatever the WebView shows, including pages the user navigates to while it is visible. */
@@ -54,12 +50,12 @@ class WebViewRedditSource(private val webView: WebView, private val script: Stri
     init {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-                mainFrameStatus = 200
+                status = 200
                 _currentUrl.value = url
             }
 
             override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-                if (request.isForMainFrame) mainFrameStatus = response.statusCode
+                if (request.isForMainFrame) status = response.statusCode
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -72,7 +68,7 @@ class WebViewRedditSource(private val webView: WebView, private val script: Stri
                 _currentUrl.value = url
                 // Persist the session so it survives the app being killed.
                 CookieManager.getInstance().flush()
-                pageLoad?.complete(mainFrameStatus)
+                pageLoad?.complete(status)
             }
 
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
@@ -80,14 +76,57 @@ class WebViewRedditSource(private val webView: WebView, private val script: Stri
             }
         }
     }
+}
 
-    override suspend fun listing(feed: Feed, sort: Sort, time: TimeFilter): Listing =
-        nextPage(listingUrl(feed, sort, time))
+/**
+ * Reads new Reddit's mobile site in real (hidden) WebViews with extract.js, one request at a time.
+ * Listings stay loaded in [feedTab], because more posts come from scrolling that page; threads
+ * open in [threadTab], like a second browser tab. Every page request carries a real browser
+ * fingerprint.
+ */
+class WebViewRedditSource(feedView: WebView, threadView: WebView, private val script: String) : RedditSource {
+    val feedTab = PageTab(feedView)
+    val threadTab = PageTab(threadView)
 
-    override suspend fun nextPage(nextUrl: String): Listing = mutex.withLock {
-        val page = load(nextUrl)
+    private val mutex = Mutex()
+    private var seenPosts = HashSet<String>()
+    private var loadedThread: String? = null
+    private var blockedUntil = 0L
+    private var blockReason = ""
+    private var backoffMs = INITIAL_BACKOFF_MS
+
+    private val _subscriptions = MutableStateFlow<List<String>>(emptyList())
+    override val subscriptions: StateFlow<List<String>> = _subscriptions
+
+    override suspend fun listing(feed: Feed, sort: Sort, time: TimeFilter): Listing = mutex.withLock {
+        val url = listingUrl(feed, sort, time)
+        val page = load(feedTab, url)
         expect(page, "listing")
-        PageParser.listing(page)
+        // Multireddits, r/all and the like land on the front page instead of failing.
+        if (feed is Feed.Subreddit && page.optString("route") == "frontpage") {
+            throw PageException(url, "Reddit sent ${feed.title} to the front page")
+        }
+        val posts = PageParser.posts(page)
+        seenPosts = posts.mapTo(HashSet()) { it.id }
+        if (_subscriptions.value.isEmpty()) loadSubscriptions()
+        Listing(posts, hasMore = posts.isNotEmpty())
+    }
+
+    override suspend fun morePosts(): Listing = mutex.withLock {
+        withContext(Dispatchers.Main.immediate) {
+            val url = feedTab.webView.url.orEmpty()
+            val deadline = SystemClock.uptimeMillis() + SCROLL_TIMEOUT_MS
+            while (SystemClock.uptimeMillis() < deadline) {
+                // Reddit's infinite scroll loads the next batch and drops old posts from the page,
+                // so new posts are recognised by id rather than by count.
+                evaluate(feedTab, "roost.scrollToEnd()")
+                delay(POLL_MS)
+                val page = checked(url, extract(feedTab), feedTab.status)
+                val fresh = PageParser.posts(page).filter { seenPosts.add(it.id) }
+                if (fresh.isNotEmpty()) return@withContext Listing(fresh, hasMore = true)
+            }
+            Listing(emptyList(), hasMore = false)
+        }
     }
 
     override suspend fun thread(permalink: String): CommentThread = mutex.withLock {
@@ -96,47 +135,63 @@ class WebViewRedditSource(private val webView: WebView, private val script: Stri
 
     override suspend fun loadMoreComments(permalink: String, moreId: String): CommentThread = mutex.withLock {
         require(MORE_ID.matches(moreId)) { "Unexpected comment id $moreId" }
-        // The WebView may have moved on since; the expansion only exists on a freshly loaded page then.
+        // Another thread may have been opened since; the expansion only exists on a fresh page then.
         if (loadedThread != permalink) loadThread(permalink)
         withContext(Dispatchers.Main.immediate) {
-            val url = webView.url.orEmpty()
-            if (evaluate("roost.loadMore('$moreId')") != "true") {
-                throw PageException(url, "\"load more comments\" link $moreId is not on the page")
+            val url = threadTab.webView.url.orEmpty()
+            if (evaluate(threadTab, "roost.loadMore('$moreId')") != "true") {
+                throw PageException(url, "Nothing to expand for $moreId")
             }
-            try {
-                withTimeout(MORE_TIMEOUT_MS) {
-                    while (evaluate("roost.moreLoaded('$moreId')") != "true") delay(250)
-                }
-            } catch (e: TimeoutCancellationException) {
+            if (!waitFor(threadTab, "roost.moreLoaded('$moreId')", MORE_TIMEOUT_MS)) {
                 throw PageException(url, "Loading more comments timed out")
             }
-            val page = checked(url, extract(), mainFrameStatus)
+            val page = checked(url, extract(threadTab), threadTab.status)
             expect(page, "thread")
             PageParser.thread(page)
         }
     }
 
     private suspend fun loadThread(permalink: String): CommentThread {
-        val page = load(BASE_URL + permalink.trimStart('/'))
+        val url = BASE_URL + permalink.trimStart('/')
+        load(threadTab, url)
+        // Comments render shortly after the page itself.
+        waitFor(threadTab, "roost.threadReady()", THREAD_TIMEOUT_MS)
+        val page = checked(url, extract(threadTab), threadTab.status)
         expect(page, "thread")
         loadedThread = permalink
         return PageParser.thread(page)
     }
 
-    private suspend fun load(url: String): JSONObject = withContext(Dispatchers.Main.immediate) {
+    /** The list only reaches the page when the nav drawer opens, so open it once and close it again. */
+    private suspend fun loadSubscriptions() = withContext(Dispatchers.Main.immediate) {
+        if (evaluate(feedTab, "roost.toggleNav()") != "true") return@withContext
+        val deadline = SystemClock.uptimeMillis() + NAV_TIMEOUT_MS
+        while (SystemClock.uptimeMillis() < deadline) {
+            delay(POLL_MS)
+            val subscriptions = PageParser.subscriptions(extract(feedTab))
+            if (!subscriptions.isNullOrEmpty()) {
+                _subscriptions.value = subscriptions
+                break
+            }
+        }
+        evaluate(feedTab, "roost.toggleNav()")
+        if (_subscriptions.value.isEmpty()) Log.w(TAG, "No subscription list at ${feedTab.webView.url}")
+    }
+
+    private suspend fun load(tab: PageTab, url: String): JSONObject = withContext(Dispatchers.Main.immediate) {
         if (System.currentTimeMillis() < blockedUntil) throw BlockedException(blockReason, blockedUntil)
-        loadedThread = null
+        if (tab === threadTab) loadedThread = null
         val done = CompletableDeferred<Int>()
-        pageLoad = done
-        webView.loadUrl(url)
+        tab.pageLoad = done
+        tab.webView.loadUrl(url)
         val status = try {
             withTimeout(LOAD_TIMEOUT_MS) { done.await() }
         } catch (e: TimeoutCancellationException) {
             throw PageException(url, "Page load timed out")
         } finally {
-            pageLoad = null
+            tab.pageLoad = null
         }
-        checked(url, extract(), status)
+        checked(url, extract(tab), status)
     }
 
     /** Turns block pages, HTTP errors and logged-out pages into exceptions; backs off on blocks. */
@@ -153,9 +208,12 @@ class WebViewRedditSource(private val webView: WebView, private val script: Stri
             throw BlockedException(blockReason, blockedUntil)
         }
         if (status >= 400) throw PageException(url, "HTTP $status")
-        if (!page.optBoolean("loggedIn")) throw NotLoggedInException()
+        if (!page.optBoolean("loggedIn")) {
+            Log.w(TAG, "Not logged in at ${page.optString("url")} (requested $url, page '${page.optString("page")}', title '${page.optString("title")}')")
+            throw NotLoggedInException()
+        }
         backoffMs = INITIAL_BACKOFF_MS
-        PageParser.subscriptions(page).takeIf { it.isNotEmpty() }?.let { _subscriptions.value = it }
+        PageParser.subscriptions(page)?.takeIf { it.isNotEmpty() }?.let { _subscriptions.value = it }
         return page
     }
 
@@ -167,30 +225,37 @@ class WebViewRedditSource(private val webView: WebView, private val script: Stri
         }
     }
 
-    /** Runs extract.js on the current page; exposed for the debug overlay. */
-    suspend fun extract(): JSONObject = withContext(Dispatchers.Main.immediate) {
-        val raw = evaluate("roost.extract()")
+    /** Runs extract.js on [tab]'s current page; also used by the debug overlay. */
+    suspend fun extract(tab: PageTab): JSONObject = withContext(Dispatchers.Main.immediate) {
+        val raw = evaluate(tab, "roost.extract()")
         try {
             JSONObject(raw)
         } catch (e: JSONException) {
-            Log.w(TAG, "Unparseable extract.js result for ${webView.url}: $raw", e)
-            throw PageException(webView.url.orEmpty(), "Unparseable extraction result")
+            Log.w(TAG, "Unparseable extract.js result for ${tab.webView.url}: $raw", e)
+            throw PageException(tab.webView.url.orEmpty(), "Unparseable extraction result")
         }
     }
 
+    private suspend fun waitFor(tab: PageTab, condition: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (evaluate(tab, condition) == "true") return true
+            delay(POLL_MS)
+        }
+        return false
+    }
+
     /** Defines window.roost (cheap, idempotent) and evaluates [expression] against it. */
-    private suspend fun evaluate(expression: String): String = suspendCancellableCoroutine { cont ->
-        webView.evaluateJavascript("$script\n;$expression") { cont.resume(it) }
+    private suspend fun evaluate(tab: PageTab, expression: String): String = suspendCancellableCoroutine { cont ->
+        tab.webView.evaluateJavascript("$script\n;$expression") { cont.resume(it) }
     }
 
     companion object {
         fun listingUrl(feed: Feed, sort: Sort, time: TimeFilter): String {
-            val prefix = when (feed) {
-                Feed.Front -> ""
-                is Feed.Subreddit -> "r/${feed.name}/"
-            }
+            if (feed is Feed.Front) return BASE_URL
+            val name = (feed as Feed.Subreddit).name
             val query = if (sort.timed) "?t=${time.param}" else ""
-            return "$BASE_URL$prefix${sort.path}/$query"
+            return "${BASE_URL}r/$name/${sort.path}/$query"
         }
 
         const val LOGIN_URL = "https://www.reddit.com/login/"

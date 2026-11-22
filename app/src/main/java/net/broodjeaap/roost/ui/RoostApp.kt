@@ -1,6 +1,5 @@
 package net.broodjeaap.roost.ui
 
-import android.webkit.WebView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,28 +36,40 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.launch
+import net.broodjeaap.roost.data.PageTab
 import net.broodjeaap.roost.data.WebViewRedditSource
 
 /**
- * The app draws over the shared WebView, which stays attached and laid out underneath so Reddit's
- * pages behave as in a normal browser. Overlays (login, a block page, debugging) simply reveal it.
+ * The app draws over the two hidden WebViews (feed and thread), which stay attached and laid out
+ * underneath so Reddit's pages behave as in a normal browser. Overlays (login, a block page,
+ * debugging) reveal one of them: login and the feed use the feed tab, an open thread its own tab.
  */
 @Composable
-fun RoostApp(state: AppState, webView: WebView, source: WebViewRedditSource) {
+fun RoostApp(state: AppState, source: WebViewRedditSource) {
     val overlay = state.overlay
     BackHandler(enabled = overlay != null || state.threads.isNotEmpty()) { state.back() }
+    val shown = if (overlay == Overlay.PAGE && state.threads.isNotEmpty()) source.threadTab else source.feedTab
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            if (overlay != null) OverlayContent(overlay, state, webView, source)
-            AndroidView(
-                factory = { webView },
-                modifier = Modifier
+            if (overlay != null) OverlayContent(overlay, state, shown, source)
+            Box(
+                Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .then(if (overlay != null) Modifier.navigationBarsPadding().imePadding() else Modifier),
-            )
+                    .then(if (overlay != null) Modifier.navigationBarsPadding().imePadding() else Modifier)
+            ) {
+                listOf(source.feedTab, source.threadTab).forEach { tab ->
+                    AndroidView(
+                        factory = { tab.webView },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .zIndex(if (tab === shown) 1f else 0f),
+                    )
+                }
+            }
         }
         if (overlay == null) {
             Surface(Modifier.fillMaxSize()) {
@@ -71,14 +82,14 @@ fun RoostApp(state: AppState, webView: WebView, source: WebViewRedditSource) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OverlayContent(overlay: Overlay, state: AppState, webView: WebView, source: WebViewRedditSource) {
-    val url by source.currentUrl.collectAsState()
+private fun OverlayContent(overlay: Overlay, state: AppState, tab: PageTab, source: WebViewRedditSource) {
+    val url by tab.currentUrl.collectAsState()
     var json by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     if (overlay == Overlay.LOGIN) {
         var sawAuthPage by remember { mutableStateOf(false) }
-        LaunchedEffect(Unit) { webView.loadUrl(WebViewRedditSource.LOGIN_URL) }
+        LaunchedEffect(Unit) { tab.webView.loadUrl(WebViewRedditSource.LOGIN_URL) }
         // Reddit leaves the login pages once the session exists.
         LaunchedEffect(url) {
             val current = url ?: return@LaunchedEffect
@@ -104,7 +115,7 @@ private fun OverlayContent(overlay: Overlay, state: AppState, webView: WebView, 
             if (overlay == Overlay.PAGE) {
                 TextButton(onClick = {
                     scope.launch {
-                        json = runCatching { source.extract().toString(2).replace("\\/", "/") }
+                        json = runCatching { source.extract(tab).toString(2).replace("\\/", "/") }
                             .getOrElse { it.toString() }
                     }
                 }) { Text("Extract") }

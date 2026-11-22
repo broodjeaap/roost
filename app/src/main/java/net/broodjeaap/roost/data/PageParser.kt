@@ -5,14 +5,14 @@ import org.json.JSONObject
 
 /** Maps extract.js output onto the typed models. */
 internal object PageParser {
-    fun listing(page: JSONObject): Listing =
-        Listing(page.getJSONArray("posts").objects().map(::post), page.str("nextUrl"))
+    fun posts(page: JSONObject): List<Post> = page.getJSONArray("posts").objects().map(::post)
 
     fun thread(page: JSONObject): CommentThread =
         CommentThread(post(page.getJSONObject("post")), comments(page.getJSONArray("comments")))
 
-    fun subscriptions(page: JSONObject): List<String> =
-        page.optJSONArray("subscriptions")?.let { array -> List(array.length()) { array.getString(it) } }.orEmpty()
+    /** Null when the page doesn't carry the list (the nav drawer hasn't been opened). */
+    fun subscriptions(page: JSONObject): List<String>? =
+        page.optJSONArray("subscriptions")?.let { array -> List(array.length()) { array.getString(it) } }
 
     private fun post(json: JSONObject) = Post(
         id = json.getString("id"),
@@ -27,7 +27,6 @@ internal object PageParser {
         createdMillis = json.long("created"),
         nsfw = json.optBoolean("nsfw"),
         spoiler = json.optBoolean("spoiler"),
-        stickied = json.optBoolean("stickied"),
         isSelf = json.optBoolean("isSelf"),
         flair = json.str("flair"),
         thumbnail = json.str("thumbnail"),
@@ -41,6 +40,7 @@ internal object PageParser {
         "video" -> Media.Video(
             hlsUrl = json.str("hlsUrl"),
             mp4Url = json.str("mp4Url"),
+            poster = json.str("poster"),
             width = json.int("width"),
             height = json.int("height"),
             gif = json.optBoolean("gif"),
@@ -63,7 +63,6 @@ internal object PageParser {
                 bodyHtml = json.str("bodyHtml").orEmpty(),
                 submitter = json.optBoolean("submitter"),
                 moderator = json.optBoolean("moderator"),
-                flair = json.str("flair"),
                 collapsedByDefault = json.optBoolean("collapsed"),
                 children = comments(json.getJSONArray("children")),
             )

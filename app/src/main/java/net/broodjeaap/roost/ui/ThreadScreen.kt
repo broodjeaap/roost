@@ -205,7 +205,6 @@ private fun CommentItem(row: CommentRow.Item, state: AppState, onToggle: () -> U
                 buildAnnotatedString {
                     withStyle(SpanStyle(color = authorColor, fontWeight = FontWeight.SemiBold)) { append(comment.author) }
                     withStyle(SpanStyle(color = muted)) {
-                        comment.flair?.let { append(" [$it]") }
                         append(" · ")
                         append(comment.score?.let { "${count(it)} pts" } ?: "[score hidden]")
                         append(" · ")

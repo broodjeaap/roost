@@ -70,7 +70,6 @@ fun PostMeta(post: Post, modifier: Modifier = Modifier) {
 @Composable
 fun PostTags(post: Post, modifier: Modifier = Modifier) {
     val tags = buildList {
-        if (post.stickied) add("Pinned" to MaterialTheme.colorScheme.tertiary)
         if (post.nsfw) add("NSFW" to MaterialTheme.colorScheme.error)
         if (post.spoiler) add("Spoiler" to MaterialTheme.colorScheme.onSurfaceVariant)
         post.flair?.let { add(it to MaterialTheme.colorScheme.secondary) }
@@ -175,9 +174,10 @@ private fun VideoMedia(post: Post, video: Media.Video, state: AppState, inFeed: 
         VideoPlayer(video, modifier)
     } else {
         Box(modifier.clickable { state.playing = post.id }, contentAlignment = Alignment.Center) {
-            if (post.thumbnail != null) {
+            val poster = video.poster ?: post.thumbnail
+            if (poster != null) {
                 AsyncImage(
-                    model = post.thumbnail,
+                    model = poster,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     alpha = 0.6f,

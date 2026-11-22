@@ -134,6 +134,16 @@ private fun PostCard(post: Post, state: AppState) {
         Text(post.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 12.dp))
         PostTags(post, Modifier.padding(horizontal = 12.dp))
         PostMedia(post, state, inFeed = true, onOpen = open)
+        post.bodyHtml?.let { html ->
+            Text(
+                rememberHtml(html, state::openUrl),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+        }
         PostStats(post, Modifier.padding(horizontal = 12.dp))
     }
     HorizontalDivider(thickness = 6.dp, color = MaterialTheme.colorScheme.surfaceVariant)
@@ -152,7 +162,7 @@ private fun FeedFooter(state: AppState) {
         when {
             error != null -> ErrorPanel(error, state, state::retryFeed)
             state.feedLoading -> CircularProgressIndicator()
-            state.nextUrl != null -> LaunchedEffect(state.nextUrl) { state.loadNext() }
+            state.hasMore -> LaunchedEffect(state.posts.size) { state.loadNext() }
             else -> Text("End of the list", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -160,6 +170,8 @@ private fun FeedFooter(state: AppState) {
 
 @Composable
 private fun SortMenu(state: AppState) {
+    // The front page only has Best on Reddit's mobile site; nothing to choose there.
+    if (Sort.available(state.feed).size < 2) return
     var open by remember { mutableStateOf(false) }
     var timedSort by remember { mutableStateOf<Sort?>(null) }
     Box {
@@ -232,10 +244,9 @@ private fun SubredditDrawer(state: AppState, onSelect: (Feed) -> Unit) {
                 }
             }
             item { DrawerItem("Front page", state.feed == Feed.Front) { onSelect(Feed.Front) } }
-            listOf("popular", "all").forEach { name ->
-                item(key = "fixed-$name") {
-                    DrawerItem("r/$name", state.feed == Feed.Subreddit(name)) { onSelect(Feed.Subreddit(name)) }
-                }
+            item {
+                val popular = Feed.Subreddit("popular")
+                DrawerItem(popular.title, state.feed == popular) { onSelect(popular) }
             }
             item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
             item {
