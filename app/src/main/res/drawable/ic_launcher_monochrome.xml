@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon silhouette of ic_launcher_foreground; the system tints it, only alpha counts.
+     Eyes and beak are holes: drawn clockwise inside the counter-clockwise head, so the
+     non-zero fill rule leaves them empty. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M43,48 C41,42 39,37 41.5,33.5 C44,30 48.5,31 49,35 C48.5,29 51,25 55,25 C59,25 61.5,29 60.5,35 C61.5,31 66,30 67.5,34 C69.5,38 67,43 65,48 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M26,55 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0 M71,55 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M31,60 a23,17 0 1,0 46,0 a23,17 0 1,0 -46,0 M41.5,57 a4,4 0 1,1 8,0 a4,4 0 1,1 -8,0 M58.5,57 a4,4 0 1,1 8,0 a4,4 0 1,1 -8,0 M49,63 L59,63 L54,71 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,72 c-3,0 -4.5,2 -4.5,4 c0,3.5 2,7 4.5,7 c2.5,0 4.5,-3.5 4.5,-7 c0,-2 -1.5,-4 -4.5,-4 Z" />
+</vector>
