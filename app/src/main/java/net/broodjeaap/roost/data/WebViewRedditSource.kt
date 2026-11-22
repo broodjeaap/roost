@@ -20,8 +20,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
+import org.json.JSONTokener
 import kotlin.coroutines.resume
 
 private const val TAG = "Roost"
@@ -33,6 +35,7 @@ private const val THREAD_TIMEOUT_MS = 8_000L
 private const val SCROLL_TIMEOUT_MS = 10_000L
 private const val MORE_TIMEOUT_MS = 15_000L
 private const val NAV_TIMEOUT_MS = 5_000L
+private const val SEARCH_TIMEOUT_MS = 8_000L
 private const val POLL_MS = 250L
 private const val INITIAL_BACKOFF_MS = 60_000L
 private const val MAX_BACKOFF_MS = 30 * 60_000L
@@ -127,6 +130,27 @@ class WebViewRedditSource(feedView: WebView, threadView: WebView, private val sc
             }
             Listing(emptyList(), hasMore = false)
         }
+    }
+
+    // No mutex: this doesn't navigate, it runs a fetch inside whatever the feed tab shows. If a load
+    // replaces that page meanwhile, the result is lost and the search times out.
+    override suspend fun searchSubreddits(query: String): List<SubredditMatch> = withContext(Dispatchers.Main.immediate) {
+        if (System.currentTimeMillis() < blockedUntil) throw BlockedException(blockReason, blockedUntil)
+        val quoted = JSONObject.quote(query)
+        val url = feedTab.webView.url.orEmpty()
+        evaluate(feedTab, "roost.startSearch($quoted)")
+        val deadline = SystemClock.uptimeMillis() + SEARCH_TIMEOUT_MS
+        while (SystemClock.uptimeMillis() < deadline) {
+            delay(POLL_MS)
+            when (val result = JSONTokener(evaluate(feedTab, "roost.searchResult($quoted)")).nextValue()) {
+                is JSONArray -> return@withContext PageParser.subredditMatches(result)
+                is JSONObject -> {
+                    Log.w(TAG, "Subreddit search for '$query' failed at $url: ${result.optString("error")}")
+                    throw PageException(url, "Subreddit search failed")
+                }
+            }
+        }
+        throw PageException(url, "Subreddit search timed out")
     }
 
     override suspend fun thread(permalink: String): CommentThread = mutex.withLock {

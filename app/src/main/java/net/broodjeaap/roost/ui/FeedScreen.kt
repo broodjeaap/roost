@@ -47,15 +47,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.broodjeaap.roost.data.BlockedException
 import net.broodjeaap.roost.data.Feed
 import net.broodjeaap.roost.data.NotLoggedInException
 import net.broodjeaap.roost.data.Post
 import net.broodjeaap.roost.data.Sort
+import net.broodjeaap.roost.data.SubredditMatch
 import net.broodjeaap.roost.data.TimeFilter
 import java.text.DateFormat
 import java.util.Date
+
+/** Reddit's typeahead is asked only from this many characters, after this long without typing. */
+private const val MIN_SEARCH_LENGTH = 2
+private const val SEARCH_DEBOUNCE_MS = 400L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -222,13 +229,35 @@ private fun OverflowMenu(state: AppState) {
 private fun SubredditDrawer(state: AppState, onSelect: (Feed) -> Unit) {
     val subscriptions by state.subscriptions.collectAsState()
     var input by remember { mutableStateOf("") }
-    val go = {
-        val name = input.trim().removePrefix("/").removePrefix("r/").trim('/')
-        if (name.isNotEmpty()) {
-            input = ""
-            onSelect(Feed.Subreddit(name))
+    val query = input.trim().removePrefix("/").removePrefix("r/").trim('/')
+    var matches by remember { mutableStateOf<List<SubredditMatch>>(emptyList()) }
+    var searching by remember { mutableStateOf(false) }
+    LaunchedEffect(query) {
+        matches = emptyList()
+        searching = query.length >= MIN_SEARCH_LENGTH
+        if (!searching) return@LaunchedEffect
+        // Wait for a pause in typing; Reddit's own search box asks on every keystroke.
+        delay(SEARCH_DEBOUNCE_MS)
+        matches = try {
+            state.searchSubreddits(query)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
         }
+        searching = false
     }
+    val select = { feed: Feed ->
+        input = ""
+        onSelect(feed)
+    }
+    // Subscriptions containing the text, those starting with it first (sortedBy is stable, so
+    // each group stays alphabetical); then Reddit's suggestions that aren't subscribed already.
+    val subscribed = subscriptions.filter { it.contains(query, ignoreCase = true) }
+        .sortedBy { !it.startsWith(query, ignoreCase = true) }
+    val subscribedNames = subscriptions.mapTo(HashSet()) { it.lowercase() }
+    val others = matches.filter { it.name.lowercase() !in subscribedNames }
+
     ModalDrawerSheet {
         LazyColumn(contentPadding = PaddingValues(vertical = 12.dp)) {
             item {
@@ -244,38 +273,78 @@ private fun SubredditDrawer(state: AppState, onSelect: (Feed) -> Unit) {
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                     )
-                    Button(onClick = go) { Text("Go") }
+                    Button(onClick = { if (query.isNotEmpty()) select(Feed.Subreddit(query)) }) { Text("Go") }
                 }
             }
-            item { DrawerItem("Front page", state.feed == Feed.Front) { onSelect(Feed.Front) } }
-            item {
-                val popular = Feed.Subreddit("popular")
-                DrawerItem(popular.title, state.feed == popular) { onSelect(popular) }
+            if (query.isEmpty()) {
+                item { DrawerItem("Front page", state.feed == Feed.Front) { select(Feed.Front) } }
+                item {
+                    val popular = Feed.Subreddit("popular")
+                    DrawerItem(popular.title, state.feed == popular) { select(popular) }
+                }
+                item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
             }
-            item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
-            item {
-                Text(
-                    "Subscriptions",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
-                )
+            if (subscribed.isNotEmpty()) {
+                item(key = "subscriptions") { DrawerHeader("Subscriptions") }
+                items(subscribed, key = { "sub-$it" }) { name ->
+                    DrawerItem("r/$name", state.feed == Feed.Subreddit(name)) { select(Feed.Subreddit(name)) }
+                }
             }
-            items(subscriptions, key = { "sub-$it" }) { name ->
-                DrawerItem("r/$name", state.feed == Feed.Subreddit(name)) { onSelect(Feed.Subreddit(name)) }
+            if (query.length >= MIN_SEARCH_LENGTH) {
+                item(key = "others") { DrawerHeader("Other subreddits") }
+                when {
+                    others.isNotEmpty() -> items(others, key = { "match-${it.name}" }) { match ->
+                        DrawerItem("r/${match.name}", false, match.detail) { select(Feed.Subreddit(match.name)) }
+                    }
+                    searching -> item(key = "searching") { DrawerNote("Searching…") }
+                    else -> item(key = "none") { DrawerNote("No other matches") }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DrawerItem(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun DrawerHeader(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
+    )
+}
+
+@Composable
+private fun DrawerNote(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
+    )
+}
+
+@Composable
+private fun DrawerItem(label: String, selected: Boolean, detail: String? = null, onClick: () -> Unit) {
     NavigationDrawerItem(
-        label = { Text(label) },
+        label = {
+            Column {
+                Text(label)
+                detail?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        },
         selected = selected,
         onClick = onClick,
         modifier = Modifier
             .padding(horizontal = 12.dp)
-            .height(48.dp),
+            .height(if (detail == null) 48.dp else 56.dp),
     )
 }
 

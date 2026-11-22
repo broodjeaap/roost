@@ -68,3 +68,6 @@ sealed interface CommentNode {
 data class Listing(val posts: List<Post>, val hasMore: Boolean)
 
 data class CommentThread(val post: Post, val comments: List<CommentNode>)
+
+/** A subreddit suggested by Reddit's search; [detail] is its one-line blurb (visitors, why suggested). */
+data class SubredditMatch(val name: String, val detail: String?)

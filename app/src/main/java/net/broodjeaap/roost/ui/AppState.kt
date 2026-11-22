@@ -18,6 +18,7 @@ import net.broodjeaap.roost.data.NotLoggedInException
 import net.broodjeaap.roost.data.Post
 import net.broodjeaap.roost.data.RedditSource
 import net.broodjeaap.roost.data.Sort
+import net.broodjeaap.roost.data.SubredditMatch
 import net.broodjeaap.roost.data.TimeFilter
 
 /** What sits on top of the app, revealing the shared WebView. */
@@ -209,6 +210,8 @@ class AppState(
         }
         else -> false
     }
+
+    suspend fun searchSubreddits(query: String): List<SubredditMatch> = source.searchSubreddits(query)
 
     fun loginFinished() {
         overlay = null

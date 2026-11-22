@@ -14,6 +14,9 @@ internal object PageParser {
     fun subscriptions(page: JSONObject): List<String>? =
         page.optJSONArray("subscriptions")?.let { array -> List(array.length()) { array.getString(it) } }
 
+    fun subredditMatches(array: JSONArray): List<SubredditMatch> =
+        array.objects().map { SubredditMatch(it.getString("name"), it.str("detail")) }
+
     private fun post(json: JSONObject) = Post(
         id = json.getString("id"),
         title = json.str("title").orEmpty(),

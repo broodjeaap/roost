@@ -14,6 +14,9 @@ interface RedditSource {
     /** Expands a [CommentNode.More] in [permalink]'s thread and returns the whole updated thread. */
     suspend fun loadMoreComments(permalink: String, moreId: String): CommentThread
 
+    /** Subreddits matching [query], as Reddit's own search box would suggest them. */
+    suspend fun searchSubreddits(query: String): List<SubredditMatch>
+
     /** Subscribed subreddits, loaded once per session. */
     val subscriptions: StateFlow<List<String>>
 }

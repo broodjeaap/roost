@@ -7,6 +7,8 @@
 //                               comments for id 'top'; false if there is nothing to expand
 //   roost.moreLoaded(id)     -> true once that expansion has been replaced by comments
 //   roost.toggleNav()        -> opens/closes the nav drawer, which loads the subscription list
+//   roost.startSearch(q)     -> asks Reddit's search typeahead for subreddits matching q
+//   roost.searchResult(q)    -> null while pending, then [{name, detail}] or {error}
 window.roost = (function () {
   var TOP = 'top';
 
@@ -256,12 +258,51 @@ window.roost = (function () {
     return true;
   }
 
+  // window.roost is redefined on every call, so in-flight searches live on window itself.
+  function startSearch(query) {
+    var store = window.__roostSearches || (window.__roostSearches = {});
+    var session = window.__roostSearchSession || (window.__roostSearchSession = crypto.randomUUID());
+    delete store[query];
+    // The same request Reddit's own search box makes while typing.
+    fetch('/svc/shreddit/search-typeahead?query=' + encodeURIComponent(query) + '&cId=' + session +
+      '&recentSearchesCount=5&mode=search', { credentials: 'include' })
+      .then(function (response) {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.text();
+      })
+      .then(function (html) { store[query] = communities(html); })
+      .catch(function (e) { store[query] = { error: String(e) }; });
+    return true;
+  }
+
+  // Typeahead entries are links like <a href="/r/Kotlin/">r/Kotlin 10K weekly visitors</a>.
+  function communities(html) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    var seen = {};
+    var out = [];
+    Array.prototype.forEach.call(doc.querySelectorAll('a[href^="/r/"]'), function (link) {
+      var name = link.getAttribute('href').split('/')[2];
+      if (!name || seen[name.toLowerCase()]) return;
+      seen[name.toLowerCase()] = true;
+      var detail = text(link).replace(/\s+/g, ' ').replace(new RegExp('^r/' + name, 'i'), '').trim();
+      out.push({ name: name, detail: detail || null });
+    });
+    return out;
+  }
+
+  function searchResult(query) {
+    var store = window.__roostSearches;
+    return store && Object.prototype.hasOwnProperty.call(store, query) ? store[query] : null;
+  }
+
   return {
     extract: extract,
     threadReady: threadReady,
     scrollToEnd: scrollToEnd,
     loadMore: loadMore,
     moreLoaded: moreLoaded,
-    toggleNav: toggleNav
+    toggleNav: toggleNav,
+    startSearch: startSearch,
+    searchResult: searchResult
   };
 })();
