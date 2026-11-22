@@ -54,7 +54,12 @@ fun RoostApp(state: AppState, source: WebViewRedditSource) {
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            if (overlay != null) OverlayContent(overlay, state, shown, source)
+            // WebViews paint over Compose content drawn before them, even outside their own bounds,
+            // so the overlay bar is laid out above them but drawn after them (zIndex), and the tab
+            // being shown is drawn after the hidden one.
+            if (overlay != null) {
+                Column(Modifier.zIndex(1f)) { OverlayContent(overlay, state, shown, source) }
+            }
             Box(
                 Modifier
                     .weight(1f)
