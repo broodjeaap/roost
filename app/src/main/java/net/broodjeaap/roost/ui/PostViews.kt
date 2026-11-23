@@ -135,9 +135,8 @@ private fun EmbeddedMedia(media: Media, state: AppState) {
         .widthIn(max = EMBED_MAX_WIDTH)
         .fillMaxWidth()
     when (media) {
-        is Media.Image -> AsyncImage(
-            model = media.url,
-            contentDescription = null,
+        is Media.Image -> ZoomableImage(
+            url = media.url,
             contentScale = ContentScale.Fit,
             modifier = size
                 .then(if (media.width != null && media.height != null) Modifier.aspectRatio(ratio(media.width, media.height, false)) else Modifier)
@@ -164,9 +163,8 @@ private fun ratio(width: Int?, height: Int?, inFeed: Boolean): Float {
 
 @Composable
 private fun ImageMedia(image: Media.Image, inFeed: Boolean, modifier: Modifier = Modifier) {
-    AsyncImage(
-        model = image.url,
-        contentDescription = null,
+    ZoomableImage(
+        url = image.url,
         contentScale = if (inFeed) ContentScale.Crop else ContentScale.Fit,
         modifier = modifier
             .fillMaxWidth()
@@ -186,9 +184,8 @@ private fun GalleryMedia(gallery: Media.Gallery, inFeed: Boolean) {
             .background(Color.Black)
     ) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
-            AsyncImage(
-                model = gallery.images[page].url,
-                contentDescription = null,
+            ZoomableImage(
+                url = gallery.images[page].url,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize(),
             )
