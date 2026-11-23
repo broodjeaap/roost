@@ -24,6 +24,7 @@ interface RedditSource {
 sealed interface Feed {
     val title: String
 
+    /** My subscriptions only: Reddit's recommendations from other subreddits are left out. */
     data object Front : Feed {
         override val title = "Front page"
     }

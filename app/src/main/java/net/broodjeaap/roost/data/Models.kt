@@ -15,6 +15,8 @@ data class Post(
     val nsfw: Boolean,
     val spoiler: Boolean,
     val isSelf: Boolean,
+    /** Added to the front page by Reddit from a subreddit I'm not subscribed to. */
+    val recommended: Boolean,
     val flair: String?,
     val thumbnail: String?,
     /** Self text; a preview in listings, complete on thread pages. */

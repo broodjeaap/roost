@@ -31,6 +31,7 @@ internal object PageParser {
         nsfw = json.optBoolean("nsfw"),
         spoiler = json.optBoolean("spoiler"),
         isSelf = json.optBoolean("isSelf"),
+        recommended = json.optBoolean("recommended"),
         flair = json.str("flair"),
         thumbnail = json.str("thumbnail"),
         body = body(json.getJSONArray("body")),

@@ -93,6 +93,8 @@ class WebViewRedditSource(feedView: WebView, threadView: WebView, private val sc
 
     private val mutex = Mutex()
     private var seenPosts = HashSet<String>()
+    /** The feed tab shows the front page, which drops Reddit's [Post.recommended] posts. */
+    private var frontPage = false
     private var loadedThread: String? = null
     private var blockedUntil = 0L
     private var blockReason = ""
@@ -111,9 +113,13 @@ class WebViewRedditSource(feedView: WebView, threadView: WebView, private val sc
         }
         val posts = PageParser.posts(page)
         seenPosts = posts.mapTo(HashSet()) { it.id }
+        frontPage = feed == Feed.Front
         if (_subscriptions.value.isEmpty()) loadSubscriptions()
-        Listing(posts, hasMore = posts.isNotEmpty())
+        // A page of only recommendations still has more behind it.
+        Listing(shown(posts), hasMore = posts.isNotEmpty())
     }
+
+    private fun shown(posts: List<Post>) = if (frontPage) posts.filterNot { it.recommended } else posts
 
     override suspend fun morePosts(): Listing = mutex.withLock {
         withContext(Dispatchers.Main.immediate) {
@@ -125,7 +131,8 @@ class WebViewRedditSource(feedView: WebView, threadView: WebView, private val sc
                 evaluate(feedTab, "roost.scrollToEnd()")
                 delay(POLL_MS)
                 val page = checked(url, extract(feedTab), feedTab.status)
-                val fresh = PageParser.posts(page).filter { seenPosts.add(it.id) }
+                // Recommendation-only batches count as nothing new: keep scrolling.
+                val fresh = shown(PageParser.posts(page).filter { seenPosts.add(it.id) })
                 if (fresh.isNotEmpty()) return@withContext Listing(fresh, hasMore = true)
             }
             Listing(emptyList(), hasMore = false)

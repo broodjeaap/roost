@@ -168,6 +168,9 @@ window.roost = (function () {
       nsfw: p.hasAttribute('nsfw'),
       spoiler: p.hasAttribute('spoiler'),
       isSelf: (p.getAttribute('domain') || '').indexOf('self.') === 0,
+      // Home feed posts Reddit adds from subreddits I'm not subscribed to. Posts from my own
+      // subreddits can carry a recommendation-source too (Reddit's ranking); those stay.
+      recommended: p.hasAttribute('recommendation-source') && !p.hasAttribute('is-subscribed'),
       flair: text(p.querySelector('shreddit-post-flair')) || null,
       thumbnail: thumb ? absolute(thumb.getAttribute('src')) : null,
       body: body(p.id + '-post-rtjson-content'),
