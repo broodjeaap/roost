@@ -45,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -71,6 +72,12 @@ private const val SEARCH_DEBOUNCE_MS = 400L
 fun FeedScreen(state: AppState) {
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val focus = LocalFocusManager.current
+    // The search field lives on in the closed drawer; while focused it keeps the keyboard up over
+    // the feed, where back then navigates instead of closing it.
+    LaunchedEffect(drawer.targetValue) {
+        if (drawer.targetValue == DrawerValue.Closed) focus.clearFocus()
+    }
 
     ModalNavigationDrawer(
         drawerState = drawer,
