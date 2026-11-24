@@ -79,10 +79,13 @@ jobs:
           cp "${{ steps.apk.outputs.path }}" roost.apk
           # Recreated every build: the tag moves to this commit, and a `latest` tag removed in
           # the meantime (e.g. by a mirror push that prunes refs) comes back.
+          # No --cleanup-tag: it fails (HTTP 422) when the release outlived its tag; the tag is
+          # deleted below only if it exists. `git/ref/` (singular) matches exactly, `git/refs/`
+          # would also match by prefix (e.g. `latest-foo`).
           if gh release view latest > /dev/null 2>&1; then
-            gh release delete latest --yes --cleanup-tag
+            gh release delete latest --yes
           fi
-          if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/latest" > /dev/null 2>&1; then
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/latest" > /dev/null 2>&1; then
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/latest"
           fi
           gh release create latest roost.apk \
