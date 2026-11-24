@@ -79,12 +79,12 @@ internal object PageParser {
             )
         }
     }
-
-    private fun JSONArray.objects(): List<JSONObject> = List(length()) { getJSONObject(it) }
-
-    private fun JSONObject.str(key: String): String? = if (isNull(key)) null else getString(key).ifEmpty { null }
-
-    private fun JSONObject.int(key: String): Int? = if (isNull(key)) null else getDouble(key).toInt()
-
-    private fun JSONObject.long(key: String): Long? = if (isNull(key)) null else getDouble(key).toLong()
 }
+
+internal fun JSONArray.objects(): List<JSONObject> = List(length()) { getJSONObject(it) }
+
+internal fun JSONObject.str(key: String): String? = if (isNull(key)) null else getString(key).ifEmpty { null }
+
+internal fun JSONObject.int(key: String): Int? = if (isNull(key)) null else getDouble(key).toInt()
+
+internal fun JSONObject.long(key: String): Long? = if (isNull(key)) null else getDouble(key).toLong()

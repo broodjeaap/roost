@@ -19,8 +19,10 @@ import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
+import net.broodjeaap.roost.data.LinkMedia
 import net.broodjeaap.roost.data.WebViewRedditSource
 import net.broodjeaap.roost.ui.AppState
+import net.broodjeaap.roost.ui.LocalLinkMedia
 import net.broodjeaap.roost.ui.LocalVideoDataSource
 import net.broodjeaap.roost.ui.RoostApp
 import net.broodjeaap.roost.ui.theme.RoostTheme
@@ -53,6 +55,7 @@ class MainActivity : ComponentActivity() {
                 .build()
         }
         val videoDataSource = OkHttpDataSource.Factory(http)
+        val linkMedia = LinkMedia(http)
 
         val state = AppState(source, lifecycleScope) { url ->
             try {
@@ -65,7 +68,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             RoostTheme {
-                CompositionLocalProvider(LocalVideoDataSource provides videoDataSource) {
+                CompositionLocalProvider(LocalVideoDataSource provides videoDataSource, LocalLinkMedia provides linkMedia) {
                     RoostApp(state, source)
                 }
             }

@@ -24,6 +24,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -46,11 +48,15 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import net.broodjeaap.roost.data.BodyBlock
+import net.broodjeaap.roost.data.LinkMedia
 import net.broodjeaap.roost.data.Media
 import net.broodjeaap.roost.data.Post
 
 /** HTTP for video, sharing the WebView's user agent; provided by MainActivity. */
 val LocalVideoDataSource = staticCompositionLocalOf<DataSource.Factory> { error("No video data source") }
+
+/** Looks up media behind link posts; provided by MainActivity. */
+val LocalLinkMedia = staticCompositionLocalOf<LinkMedia> { error("No link media") }
 
 /** Feed media is cropped to at most this tall (width / height); threads show it whole. */
 private const val MIN_FEED_RATIO = 0.8f
@@ -97,12 +103,15 @@ fun PostTags(post: Post, modifier: Modifier = Modifier) {
     }
 }
 
-/** Media, or a link preview for link posts. [inFeed] crops tall media. */
+/**
+ * Media, or a link preview for link posts. Reddit shows links to other hosts (Imgur, YouTube…)
+ * only as a thumbnail, so their media is looked up from the URL. [inFeed] crops tall media.
+ */
 @Composable
 fun PostMedia(post: Post, state: AppState, inFeed: Boolean, onOpen: () -> Unit) {
-    when (val media = post.media) {
+    when (val media = post.media ?: if (post.isSelf) null else rememberLinkMedia(post.url)) {
         is Media.Image -> ImageMedia(media, inFeed, Modifier.clickable(onClick = onOpen))
-        is Media.Gallery -> GalleryMedia(media, inFeed)
+        is Media.Gallery -> GalleryMedia(media, state, inFeed)
         is Media.Video -> VideoBox(
             key = post.id,
             video = media,
@@ -112,8 +121,27 @@ fun PostMedia(post: Post, state: AppState, inFeed: Boolean, onOpen: () -> Unit) 
                 .fillMaxWidth()
                 .aspectRatio(ratio(media.width, media.height, inFeed)),
         )
+        is Media.ExternalVideo -> PlayPoster(
+            poster = media.poster,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9)
+                .background(Color.Black)
+                .clickable { state.openUrl(media.url) },
+        )
+        // Also while the lookup runs, or when it finds nothing.
         null -> if (!post.isSelf) LinkPreview(post) { state.openUrl(post.url) }
     }
+}
+
+/** Media behind [url]; null while it's looked up and when there is none. */
+@Composable
+private fun rememberLinkMedia(url: String): Media? {
+    val links = LocalLinkMedia.current
+    val media by produceState(remember(url) { links.peek(url) }, links, url) {
+        if (value == null) value = links.resolve(url)
+    }
+    return media
 }
 
 /** Rich text with its embedded images and GIFs, which Reddit shows small; so does this. */
@@ -152,7 +180,7 @@ private fun EmbeddedMedia(media: Media, state: AppState) {
                 .aspectRatio(ratio(media.width, media.height, false))
                 .clip(RoundedCornerShape(4.dp)),
         )
-        is Media.Gallery -> Unit
+        is Media.Gallery, is Media.ExternalVideo -> Unit
     }
 }
 
@@ -174,9 +202,9 @@ private fun ImageMedia(image: Media.Image, inFeed: Boolean, modifier: Modifier =
 }
 
 @Composable
-private fun GalleryMedia(gallery: Media.Gallery, inFeed: Boolean) {
-    val first = gallery.images.first()
-    val pager = rememberPagerState { gallery.images.size }
+private fun GalleryMedia(gallery: Media.Gallery, state: AppState, inFeed: Boolean) {
+    val first = gallery.items.first()
+    val pager = rememberPagerState { gallery.items.size }
     Box(
         Modifier
             .fillMaxWidth()
@@ -184,14 +212,23 @@ private fun GalleryMedia(gallery: Media.Gallery, inFeed: Boolean) {
             .background(Color.Black)
     ) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
-            ZoomableImage(
-                url = gallery.images[page].url,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
-            )
+            when (val item = gallery.items[page]) {
+                is Media.Image -> ZoomableImage(
+                    url = item.url,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                is Media.Video -> VideoBox(
+                    key = item.mp4Url ?: item.hlsUrl.orEmpty(),
+                    video = item,
+                    fallbackPoster = null,
+                    state = state,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
         Text(
-            text = "${pager.currentPage + 1}/${gallery.images.size}",
+            text = "${pager.currentPage + 1}/${gallery.items.size}",
             style = MaterialTheme.typography.labelMedium,
             color = Color.White,
             modifier = Modifier
@@ -211,24 +248,29 @@ private fun VideoBox(key: String, video: Media.Video, fallbackPoster: String?, s
     if (state.playing == key) {
         VideoPlayer(video, sized)
     } else {
-        Box(sized.clickable { state.playing = key }, contentAlignment = Alignment.Center) {
-            val poster = video.poster ?: fallbackPoster
-            if (poster != null) {
-                AsyncImage(
-                    model = poster,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    alpha = 0.6f,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-            Icon(
-                Icons.Filled.PlayArrow,
-                contentDescription = "Play",
-                tint = Color.White,
-                modifier = Modifier.size(64.dp),
+        PlayPoster(video.poster ?: fallbackPoster, sized.clickable { state.playing = key })
+    }
+}
+
+/** A dimmed [poster] with a play button over it. */
+@Composable
+private fun PlayPoster(poster: String?, modifier: Modifier) {
+    Box(modifier, contentAlignment = Alignment.Center) {
+        if (poster != null) {
+            AsyncImage(
+                model = poster,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                alpha = 0.6f,
+                modifier = Modifier.fillMaxSize(),
             )
         }
+        Icon(
+            Icons.Filled.PlayArrow,
+            contentDescription = "Play",
+            tint = Color.White,
+            modifier = Modifier.size(64.dp),
+        )
     }
 }
 

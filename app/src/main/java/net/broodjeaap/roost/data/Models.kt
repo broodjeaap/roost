@@ -25,17 +25,25 @@ data class Post(
 )
 
 sealed interface Media {
-    data class Image(val url: String, val width: Int?, val height: Int?) : Media
-    data class Gallery(val images: List<Image>) : Media
-    /** [hlsUrl] for v.redd.it, [mp4Url] for plain video files; [gif] means silent and looping. */
+    /** One image or video; galleries are made of these. */
+    sealed interface Item : Media {
+        val width: Int?
+        val height: Int?
+    }
+
+    data class Image(val url: String, override val width: Int?, override val height: Int?) : Item
+    data class Gallery(val items: List<Item>) : Media
+    /** [hlsUrl] for v.redd.it and Bluesky, [mp4Url] for plain video files; [gif] means silent and looping. */
     data class Video(
         val hlsUrl: String?,
         val mp4Url: String?,
         val poster: String?,
-        val width: Int?,
-        val height: Int?,
+        override val width: Int?,
+        override val height: Int?,
         val gif: Boolean,
-    ) : Media
+    ) : Item
+    /** A video that plays in its own app (YouTube): shown as [poster], tapping opens [url]. */
+    data class ExternalVideo(val url: String, val poster: String) : Media
 }
 
 /** Rich text (post bodies, comments) in reading order: text between embedded images and GIFs. */
